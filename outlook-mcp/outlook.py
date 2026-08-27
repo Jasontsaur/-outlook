@@ -95,6 +95,31 @@ def _find_folder(namespace, folder_path, store_name=None):
     if not parts:
         return None
 
+    # No specific store requested and the first segment is a default-folder
+    # alias: use the namespace-level default (the account Outlook itself
+    # treats as primary), rather than guessing which Store to search first -
+    # a secondary/archive PST can otherwise shadow the real Inbox.
+    alias = parts[0].strip().lower()
+    if store_name is None and alias in DEFAULT_FOLDER_ALIASES:
+        try:
+            node = namespace.GetDefaultFolder(DEFAULT_FOLDER_ALIASES[alias])
+        except Exception:
+            node = None
+        if node is not None:
+            matched = True
+            for part in parts[1:]:
+                found = None
+                for sub in node.Folders:
+                    if sub.Name == part:
+                        found = sub
+                        break
+                if found is None:
+                    matched = False
+                    break
+                node = found
+            if matched:
+                return node
+
     for store in namespace.Stores:
         if store_name and store.DisplayName != store_name:
             continue
