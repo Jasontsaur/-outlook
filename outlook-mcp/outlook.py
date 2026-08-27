@@ -12,6 +12,18 @@ import win32com.client
 
 OL_MAIL_ITEM_CLASS = 43  # olMail
 
+# Default-folder aliases, resolved via Namespace/Store.GetDefaultFolder so
+# they work regardless of the Outlook UI language (e.g. "收件匣" vs "Inbox").
+DEFAULT_FOLDER_ALIASES = {
+    "inbox": 6,          # olFolderInbox
+    "sent items": 5,     # olFolderSentMail
+    "sent": 5,
+    "deleted items": 3,  # olFolderDeletedItems
+    "trash": 3,
+    "drafts": 16,        # olFolderDrafts
+    "outbox": 4,         # olFolderOutbox
+}
+
 
 class OutlookError(RuntimeError):
     pass
@@ -72,17 +84,40 @@ def list_folders():
 
 
 def _find_folder(namespace, folder_path, store_name=None):
-    """Resolve a '/'-separated folder path (e.g. 'Inbox/Projects') to a Folder object."""
+    """Resolve a '/'-separated folder path (e.g. 'Inbox/Projects') to a Folder object.
+
+    The first path segment may be a language-independent alias (see
+    DEFAULT_FOLDER_ALIASES, e.g. "Inbox" resolves correctly even when the
+    Outlook UI shows it as "收件匣"). Remaining segments are matched by the
+    folder's literal (localized) display name.
+    """
     parts = [p for p in folder_path.split("/") if p]
+    if not parts:
+        return None
+
     for store in namespace.Stores:
         if store_name and store.DisplayName != store_name:
             continue
-        try:
-            node = store.GetRootFolder()
-        except Exception:
-            continue
+
+        node = None
+        remaining = parts
+        alias = parts[0].strip().lower()
+        if alias in DEFAULT_FOLDER_ALIASES:
+            try:
+                node = store.GetDefaultFolder(DEFAULT_FOLDER_ALIASES[alias])
+            except Exception:
+                node = None
+            remaining = parts[1:]
+
+        if node is None:
+            try:
+                node = store.GetRootFolder()
+            except Exception:
+                continue
+            remaining = parts
+
         matched = True
-        for part in parts:
+        for part in remaining:
             found = None
             for sub in node.Folders:
                 if sub.Name == part:
