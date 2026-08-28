@@ -1,12 +1,37 @@
-# outlook-mcp (V0.1 - read-only)
+# outlook-mcp
 
 本機 MCP Server，讓 Claude Code / Claude Desktop / 本機 Cowork 透過 Outlook 2016
-的 COM Automation 讀取郵件資料。**這個版本完全唯讀**，只提供：
+的 COM Automation 讀取、搜尋、分類建議，並在你確認後移動郵件。
+
+## 提供的工具
+
+**唯讀（不會修改任何東西）：**
 
 - `outlook_list_folders`：列出所有帳號/PST 下的所有資料夾與郵件數量
 - `outlook_list_recent_emails`：列出某資料夾最新 N 封郵件的中繼資料（主旨/寄件人/時間，不含內文）
+- `outlook_search`：依日期範圍/主旨關鍵字/寄件人關鍵字搜尋，回傳 metadata（不含內文）
+- `outlook_get_email`：取得單一郵件的完整內文與附件檔名
+- `outlook_classify_recent`：搜尋 + 依 `rules.yaml` 分類建議，回傳各分類數量與逐封建議去向，**不會移動任何郵件**
 
-沒有任何搜尋、分類、移動、刪除功能 — 這些會在確認 V0.1 可正常運作後，於 V0.2～V0.4 陸續加入。
+**寫入（有安全防護）：**
+
+- `outlook_create_folder`：建立資料夾（可重複呼叫，已存在就跳過）
+- `outlook_preview_move`：**唯讀**，顯示如果真的搬移「會發生什麼事」，同時會寫一份 CSV 稽核紀錄到 `staging/`
+- `outlook_move_emails`：真正搬移郵件，**沒有 `confirm=True` 一律拒絕執行**
+
+**安全流程（務必遵守）：**
+
+```
+outlook_search / outlook_classify_recent（唯讀，先看整體狀況）
+        ↓
+outlook_preview_move（唯讀，列出這批信實際會怎麼被搬）
+        ↓
+使用者親自確認要不要搬
+        ↓
+outlook_move_emails(confirm=True)（才會真的動手）
+```
+
+不要為了「省一次確認」而直接呼叫 `outlook_move_emails`；`outlook_preview_move` 的存在就是為了讓你在真正搬信之前，先看到會發生什麼事。
 
 ## 前置需求
 
@@ -15,11 +40,11 @@
   不能在遠端伺服器或容器裡執行）
 - 執行這支程式時，建議 Outlook 本身也保持開啟中
 
-## 安裝
+## 安裝 / 更新
 
 ```powershell
-cd C:\ClaudeTools\outlook-mcp
-python -m venv .venv
+cd C:\ClaudeTools\outlook-repo\outlook-mcp
+git pull origin claude/outlook-email-organization-qjyop2
 .venv\Scripts\activate
 pip install -r requirements.txt
 ```
@@ -39,53 +64,70 @@ python test_connection.py
 | --- | --- |
 | `Could not connect to Outlook via COM` | Outlook 沒開過、不是同一個 Windows 使用者 session、或 Outlook 正在跳出對話框（例如憑證提示）擋住 |
 | `pywintypes.com_error` 授權/安全性警告 | 部分企業環境的 Outlook 安全性設定會擋第三方程式存取，需請 IT 調整「程式化用戶端存取」設定 |
-| 找不到資料夾 (`Folder not found`) | 資料夾路徑要用實際名稱組成，例如多帳號時可能是 `你的Email/Inbox` 而非單純 `Inbox` |
+| 找不到資料夾 (`Folder not found`) | Inbox/Sent Items 等預設資料夾已透過 `GetDefaultFolder` 處理語系問題；自訂資料夾（如 `Projects/XX工程`）要用 Outlook 裡實際看到的名稱 |
 
-## Step 2：接上 MCP，讓 Claude Code 呼叫
+## Step 2：接上 MCP
 
-在 Claude Code 的 MCP 設定（例如專案的 `.mcp.json`，或全域 `claude mcp add`）加入：
+**Claude Code：**
+
+```powershell
+claude mcp add outlook -- C:\ClaudeTools\outlook-repo\outlook-mcp\.venv\Scripts\python.exe C:\ClaudeTools\outlook-repo\outlook-mcp\server.py
+```
+
+**Claude Desktop App：** 編輯 `%APPDATA%\Claude\claude_desktop_config.json`：
 
 ```json
 {
   "mcpServers": {
     "outlook": {
-      "command": "C:\\ClaudeTools\\outlook-mcp\\.venv\\Scripts\\python.exe",
-      "args": ["C:\\ClaudeTools\\outlook-mcp\\server.py"]
+      "command": "C:\\ClaudeTools\\outlook-repo\\outlook-mcp\\.venv\\Scripts\\python.exe",
+      "args": ["C:\\ClaudeTools\\outlook-repo\\outlook-mcp\\server.py"]
     }
   }
 }
 ```
 
-或用 CLI：
+存檔後完整重啟該用戶端。
 
-```powershell
-claude mcp add outlook -- C:\ClaudeTools\outlook-mcp\.venv\Scripts\python.exe C:\ClaudeTools\outlook-mcp\server.py
+## 分類規則
+
+`rules.yaml` 是 Claude 判斷「這封信該分去哪」的依據，`OUTLOOK_EMAIL_RULES.md`
+是同一份規則的人類可讀版本。目前已啟用的規則：
+
+- 寄件者網域含 `ruentex` → `Internal`
+
+其餘（工程專案/客戶/供應商/財務/通知）先以 `<TBD>` 佔位、`enabled: false`
+停用，等你補上實際的專案代號、客戶/供應商名稱或網域，把 `enabled` 改成
+`true` 即可生效。
+
+## 建議的使用流程
+
 ```
-
-重新啟動 Claude Code 後，跟它說：
-
+1. 跟 Claude 說：「用 outlook_classify_recent 掃過去一年的 Inbox，
+   不要搬動任何東西，先給我看分類統計」
+        ↓
+2. 檢查 counts_by_destination 跟低信心/UNMATCHED 的候選信件，
+   覺得規則不準就調整 rules.yaml，重跑一次
+        ↓
+3. 規則穩定後，針對某個分類跟 Claude 說：
+   「這批 Projects/XX工程 的信，先幫我 preview_move」
+        ↓
+4. 看過 outlook_preview_move 的結果、確認沒問題後才說：
+   「確認，幫我搬」— Claude 才會呼叫 outlook_move_emails(confirm=True)
 ```
-用 outlook_list_folders 列出我的 Outlook 資料夾，
-再用 outlook_list_recent_emails 看 Inbox 最新 10 封信。
-```
-
-確認能正確回傳資料，V0.1 就算完成。
 
 ## 目錄結構
 
 ```
 outlook-mcp/
-├── .venv/                 # 虛擬環境（不進版控）
-├── server.py              # MCP server 進入點，定義 tools
-├── outlook.py             # Outlook COM 存取邏輯（純讀取）
-├── test_connection.py     # 不經 MCP 的獨立連線測試
+├── .venv/                    # 虛擬環境（不進版控）
+├── server.py                 # MCP server 進入點，定義所有 tools
+├── outlook.py                # Outlook COM 存取邏輯（讀取 + 受保護的寫入）
+├── classify.py                # 規則比對邏輯
+├── rules.yaml                 # 機器可讀的分類規則
+├── OUTLOOK_EMAIL_RULES.md      # 人類可讀的分類規則說明
+├── test_connection.py          # 不經 MCP 的獨立連線測試
+├── staging/                    # outlook_preview_move 產生的 CSV 稽核紀錄（不進版控）
 ├── requirements.txt
 └── README.md
 ```
-
-## 下一步（V0.2 起，尚未實作）
-
-- `outlook_search`：依日期/寄件人/主旨/內文關鍵字搜尋，先回傳 metadata 而非完整內文
-- `outlook_get_email`：只在確定要看某封信時才取得完整內文與附件資訊
-- 之後才會加入 `outlook_preview_move` / `outlook_move_email` 等有寫入行為的工具，
-  且一定會先有 Preview + 使用者確認機制，才會真正執行移動。

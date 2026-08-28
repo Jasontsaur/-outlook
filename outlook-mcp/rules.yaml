@@ -1,0 +1,57 @@
+# Machine-readable classification rules used by classify.py / outlook_classify_recent.
+# Human-readable explanation of the same rules lives in OUTLOOK_EMAIL_RULES.md.
+#
+# Rules are evaluated top to bottom; the first rule whose `match` conditions
+# all hold wins. Only the match keys you set are checked - omit a key to not
+# filter on it. A rule with `enabled: false` is skipped entirely.
+#
+# match keys:
+#   sender_domain_contains / sender_contains / subject_contains: list of
+#     substrings, case-insensitive, OR'd together (any one matching is enough)
+#   body_contains: same, but only applied when a body string is explicitly
+#     passed to classify() - classify_recent normally only has metadata, so
+#     body_contains rules are effectively skipped unless you fetch bodies first
+
+rules:
+  - id: internal
+    destination: "Internal"
+    confidence: 0.9
+    match:
+      sender_domain_contains: ["ruentex"]
+
+  # --- 待補：把下面各項的 <TBD> 換成實際資料，並把 enabled 改成 true ---
+
+  - id: project_placeholder
+    destination: "Projects/<TBD>"
+    confidence: 0.9
+    enabled: false
+    match:
+      subject_contains: ["<TBD>"]
+
+  - id: customer_placeholder
+    destination: "Customers/<TBD>"
+    confidence: 0.9
+    enabled: false
+    match:
+      sender_domain_contains: ["<TBD>"]
+
+  - id: vendor_placeholder
+    destination: "Vendors/<TBD>"
+    confidence: 0.9
+    enabled: false
+    match:
+      sender_domain_contains: ["<TBD>"]
+
+  - id: finance
+    destination: "Finance"
+    confidence: 0.8
+    enabled: false
+    match:
+      subject_contains: ["請款", "發票", "報帳", "付款"]
+
+  - id: notifications
+    destination: "Notifications"
+    confidence: 0.7
+    enabled: false
+    match:
+      sender_contains: ["noreply", "no-reply", "notification"]
